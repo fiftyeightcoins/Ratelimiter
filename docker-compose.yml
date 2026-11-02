@@ -1,0 +1,17 @@
+version: '3.9'
+
+services:
+  rate-limiter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rate-limiter-app
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_APPLICATION_NAME=myRateLimiter
+      - REDIS_HOST=redis-................oud.redislabs.com
+      - REDIS_PORT=15026
+      - REDIS_USER=default
+      - REDIS_PASSWORD=t8zJVZrehwNf...............9y

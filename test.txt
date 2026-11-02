@@ -1,0 +1,180 @@
+Here is a step-by-step guide to testing the service using simple `curl` commands.
+
+---
+
+### Step 1: Health & Connectivity Check
+
+First, verify that the server is up and running on port **8081**:
+
+```bash
+curl https://localhost:8081throttling/test
+```
+
+**Expected Response:**
+```text
+works
+```
+
+---
+
+### Step 2: Configure Client Rate Limits
+
+Define rate limits for a client (`test-client-1`). In this example, we configure:
+1. **DEFAULT**: Max 10 requests per minute across all endpoints.
+2. **METHOD**: Max 5 POST requests per minute.
+3. **API**: Max 2 calls per minute on `/checkout`.
+
+```bash
+curl -X POST https://localhost:8081throttling/configure-client \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clientId": "test-client-1",
+    "limits": [
+      {
+        "limitType": "DEFAULT",
+        "limitName": "default",
+        "timeIntervalLimits": [
+          { "timeUnit": "MIN", "maxRequests": 10 }
+        ]
+      },
+      {
+        "limitType": "METHOD",
+        "limitName": "POST",
+        "timeIntervalLimits": [
+          { "timeUnit": "MIN", "maxRequests": 5 }
+        ]
+      },
+      {
+        "limitType": "API",
+        "limitName": "/checkout",
+        "timeIntervalLimits": [
+          { "timeUnit": "MIN", "maxRequests": 2 }
+        ]
+      }
+    ]
+  }'
+```
+
+**Expected Response:**
+```json
+{
+  "message": "Client configured successfully",
+  "status": "SUCCESS"
+}
+```
+
+---
+
+### Step 3: View Configured Limits in Redis
+
+Verify that rules were persisted to Redis:
+
+```bash
+curl https://localhost:8081throttling/configured-limits
+```
+
+**Expected Response:**
+A JSON array containing the rules for `test-client-1`, including `availablePermits`, `maxPermits`, and timestamps.
+
+---
+
+### Step 4: Verify Allowed API Calls (Success Case)
+
+Send verification checks for `POST /checkout`:
+
+#### Call 1 (Allowed):
+```bash
+curl -X POST https://localhost:8081throttling/verify-api-limit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clientId": "test-client-1",
+    "methodname": "POST",
+    "apiName": "/checkout"
+  }'
+```
+
+**Response:**
+```json
+{"message":"success","status":"Success"}
+```
+
+#### Call 2 (Allowed - consumes second permit):
+```bash
+curl -X POST https://localhost:8081throttling/verify-api-limit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clientId": "test-client-1",
+    "methodname": "POST",
+    "apiName": "/checkout"
+  }'
+```
+
+**Response:**
+```json
+{"message":"success","status":"Success"}
+```
+
+---
+
+### Step 5: Test Throttling / Rate-Limit Breach (Failure Case)
+
+Since `/checkout` has a limit of **2 requests per minute**, the 3rd request will breach the limit immediately:
+
+#### Call 3 (Rate-Limited):
+```bash
+curl -X POST https://localhost:8081throttling/verify-api-limit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clientId": "test-client-1",
+    "methodname": "POST",
+    "apiName": "/checkout"
+  }'
+```
+
+**Response:**
+```json
+{
+  "message": "Limit: /checkout, limitType: API, timeUnit: MIN breached for the client",
+  "status": "FAILURE"
+}
+```
+
+---
+
+### Step 6: Test Unconfigured / Unknown Client or Route
+
+When an endpoint has no matching specific or method limit, it falls back to the client's `DEFAULT` limit. If the client has no limits at all:
+
+```bash
+curl -X POST https://localhost:8081throttling/verify-api-limit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clientId": "unregistered-client",
+    "methodname": "GET",
+    "apiName": "/public-feed"
+  }'
+```
+
+**Response:**
+```json
+{
+  "message": "nolimitapplicable",
+  "status": "SUCCESS"
+}
+```
+
+---
+
+### Handy One-Liner Bash Test Loop
+
+To quickly trigger throttling and watch the permit exhaustion in real time:
+
+```bash
+for i in {1..4}; do
+  echo "Request #$i:"
+  curl -s -X POST https://localhost:8081throttling/verify-api-limit \
+    -H "Content-Type: application/json" \
+    -d '{"clientId": "test-client-1", "methodname": "POST", "apiName": "/checkout"}'
+  echo -e "\n"
+done
+```
